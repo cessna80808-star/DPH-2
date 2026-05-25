@@ -270,6 +270,9 @@ class DungeonProgressHudFeature(
     private val showLastChest = addSwitch("35_showLastChest", true, "Show the last opened dungeon reward chest and its profit.", "Last Chest Opened", emptySet(), false, configTab)
     private val includeEssenceProfit = addSwitch("36_includeEssenceProfit", true, "Include essence value in chest profit.", "Include Essence", emptySet(), false, configTab)
     private val includeDungeonKeyCost = addSwitch("37_includeDungeonKeyCost", false, "Subtract Dungeon Chest Key value when a reward chest requires one.", "Count Dungeon Key Cost", emptySet(), false, configTab)
+    private val trackKismetFeathers = addSwitch("38_trackKismetFeathers", true, "Track Kismet Feathers obtained from chests.", "Track Kismet Feathers", emptySet(), false, configTab)
+    private val showKismetFeathers = addSwitch("39_showKismetFeathers", true, "Show tracked Kismet Feather count and value.", "Kismet Feathers", emptySet(), false, configTab)
+    private val includeKismetFeatherProfit = addSwitch("3a_includeKismetFeatherProfit", true, "Include Kismet Feather value in chest profit.", "Include Kismet Feathers", emptySet(), false, configTab)
 
     private val actionsDivider = addDivider("40", "ACTIONS")
     private val apiKey = addTextInput("41_apiKey", "", "Hypixel API key.", "Hypixel API Key", emptySet(), configTab)
@@ -512,18 +515,29 @@ class DungeonProgressHudFeature(
 
     fun sendProfitStatus() {
         val stats = chestProfitStats()
+        val featherCount = if (chestProfitMode.getCurrent() == "Total") state.totalKismetFeathers else sessionKismetFeathers
+        val featherValue = featherCount * itemPrice("KISMET_FEATHER")
+        val dropRate = if (stats.chests > 0) String.format("%.2f", featherCount.toDouble() / stats.chests.toDouble()) else "N/A"
         send("Chest profit view: ${stats.label}, ${stats.profit.formatCoins()} across ${stats.chests} chests.")
+        if (featherCount > 0) {
+            send("Kismet Feathers: $featherCount (${featherValue.formatCoins()}) - $dropRate/chest")
+        }
     }
 
     fun sendRunSummary(scope: String) {
         val summary = runSummary(scope)
-        sendReplacingSummary(
-            listOf(
-                "${summary.label}: ${summary.runs} runs, ${summary.xp.format()} XP, ${summary.profit.formatCoins()} profit.",
-                "Profit/run ${summary.profitPerRun.formatCoins()}, chest ${summary.profitPerChest.formatCoins()}, hour ${summary.profitPerHour.formatCoins()}.",
-                "Avg time ${formatDuration(summary.averageRunTimeSeconds)}, XP/hour ${summary.xpPerHour.format()}.",
-            )
+        val featherCount = if (scope.equals("session", true)) sessionKismetFeathers else state.totalKismetFeathers
+        val featherValue = featherCount * itemPrice("KISMET_FEATHER")
+        val dropRate = if (summary.chests > 0) String.format("%.2f", featherCount.toDouble() / summary.chests.toDouble()) else "N/A"
+        val lines = mutableListOf(
+            "${summary.label}: ${summary.runs} runs, ${summary.xp.format()} XP, ${summary.profit.formatCoins()} profit.",
+            "Profit/run ${summary.profitPerRun.formatCoins()}, chest ${summary.profitPerChest.formatCoins()}, hour ${summary.profitPerHour.formatCoins()}.",
+            "Avg time ${formatDuration(summary.averageRunTimeSeconds)}, XP/hour ${summary.xpPerHour.format()}.",
         )
+        if (featherCount > 0) {
+            lines.add("Kismet Feathers: $featherCount (${featherValue.formatCoins()}) - $dropRate/chest")
+        }
+        sendReplacingSummary(lines)
     }
 
     fun sendStatus() {
@@ -667,6 +681,13 @@ class DungeonProgressHudFeature(
                 if (showLastChest.get()) add("&bLast Chest: &f${state.lastChestName.ifBlank { "N/A" }} &a${state.lastChestProfit.formatCoins()}")
                 add("&bAvg Chest: &a${stats.average.formatCoins()}")
             }
+            if (showKismetFeathers.get()) {
+                val featherCount = if (chestProfitMode.getCurrent() == "Total") state.totalKismetFeathers else sessionKismetFeathers
+                val featherValue = featherCount * itemPrice("KISMET_FEATHER")
+                val chestCount = if (chestProfitMode.getCurrent() == "Total") state.totalChestsOpened else sessionChestsOpened
+                val dropRate = if (chestCount > 0) String.format("%.2f", featherCount.toDouble() / chestCount.toDouble()) else "N/A"
+                add("&bKismet Feathers: &f$featherCount &a${featherValue.formatCoins()} &7($dropRate/chest)")
+            }
         }
     }
 
@@ -717,10 +738,28 @@ class DungeonProgressHudFeature(
         val cost = chestCost(plainLore)
         var itemValue = 0L
         var itemCount = 0
+        var kismetFeatherCount = 0
         val containerSlotCount = chestContainerSlotCount(items.size)
 
         for (stack in items.take(containerSlotCount)) {
             if (stack.isEmpty || stack.item == Items.GRAY_STAINED_GLASS_PANE) continue
+
+            if (trackKismetFeathers.get() && isKismetFeather(stack)) {
+                kismetFeatherCount += stack.count
+                if (includeKismetFeatherProfit.get()) {
+                    val featherPrice = itemPrice("KISMET_FEATHER").toLong()
+                    if (featherPrice > 0) {
+                        itemValue += featherPrice * stack.count
+                        if (verbose) {
+                            log("Kismet Feather value added chest=$title count=${stack.count} price=$featherPrice total=${featherPrice * stack.count}")
+                        }
+                    }
+                }
+                if (verbose) {
+                    log("Kismet Feather detected chest=$title count=${stack.count}")
+                }
+            }
+
             parseChestItem(stack)?.let {
                 if (!it.essence || includeEssenceProfit.get()) {
                     itemValue += it.totalValue.toLong()
@@ -730,6 +769,13 @@ class DungeonProgressHudFeature(
                     log("Chest screen item parsed chest=$title name=${stack.hoverName.string.cleanMc()} id=${it.itemId} unit=${it.unitValue} amount=${it.amount} essence=${it.essence} total=${it.totalValue}")
                 }
             }
+        }
+
+        if (kismetFeatherCount > 0) {
+            state.totalKismetFeathers += kismetFeatherCount
+            sessionKismetFeathers += kismetFeatherCount
+            saveState()
+            log("Recorded kismet feathers chest=$title count=$kismetFeatherCount total=${state.totalKismetFeathers} session=$sessionKismetFeathers")
         }
 
         return ChestProfitCandidate(title, itemValue - cost, cost, itemCount, containerSlotCount)
@@ -1008,6 +1054,20 @@ class DungeonProgressHudFeature(
         val price = itemPrice(id)
         if (price <= 0) return null
         return ChestProfitItem(id, price, 1, essence = false)
+    }
+
+    private fun isKismetFeather(stack: ItemStack): Boolean {
+        val name = stack.hoverName.string.cleanMc()
+        val id = ItemUtils.skyblockId(stack).orEmpty()
+        val normalizedName = if (id.isBlank()) {
+            name.uppercase(Locale.ROOT)
+                .replace("- ", "")
+                .replace("'", "")
+                .replace(" ", "_")
+        } else {
+            id
+        }
+        return normalizedName == "KISMET_FEATHER" || name.contains("Kismet Feather", true)
     }
 
     private fun normalizeItemId(id: String): String = specialIds[id] ?: id
@@ -1720,6 +1780,8 @@ class DungeonProgressHudFeature(
         var totalChestsOpened: Int = 0,
         var chestProfitWindowMillis: Long = 0,
         var lastLogImportAt: Long = 0,
+        var totalKismetFeathers: Int = 0,
+        var sessionKismetFeathers: Int = 0,
     )
 
     data class RunSample(
@@ -1850,5 +1912,6 @@ class DungeonProgressHudFeature(
     private val hardcodedItemPrices = mapOf(
         "SHARD_POWER_DRAGON" to 450_000,
         "SHARD_APEX_DRAGON" to 500_000,
+        "KISMET_FEATHER" to 1_300_000,
     )
 }

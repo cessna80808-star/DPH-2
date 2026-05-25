@@ -1,5 +1,5 @@
 plugins {
-    id("fabric-loom") version "1.15-SNAPSHOT"
+    id("fabric-loom") version "1.6.8"
     kotlin("jvm") version "2.3.0"
     kotlin("plugin.serialization") version "2.3.0"
 }
@@ -24,10 +24,10 @@ kotlin {
 }
 
 dependencies {
-    minecraft("com.mojang:minecraft:1.21.10")
+    minecraft("com.mojang:minecraft:1.21.11")
     mappings(loom.officialMojangMappings())
     modImplementation("net.fabricmc:fabric-loader:0.18.4")
-    modImplementation("net.fabricmc.fabric-api:fabric-api:0.138.4+1.21.10")
+    modImplementation("net.fabricmc.fabric-api:fabric-api:0.139.0+1.21.11")
     modImplementation("net.fabricmc:fabric-language-kotlin:1.13.10+kotlin.2.3.20")
     modApi(files("libs/devonian-1.18.8.jar"))
 }
